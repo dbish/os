@@ -1,7 +1,7 @@
 /*
  * tsh - A tiny shell program with job control
  *
- * <Diamond Bishop xxx11>
+ * <Diamond Bishop db643>
  * <Josh Datko jbd65>
  */
 #include <stdio.h>
@@ -52,7 +52,6 @@ struct job_t {              /* The job struct */
 struct job_t jobs[MAXJOBS]; /* The job list */
 
 static const char * builtin_cmds[] = {"quit", "jobs", "bg", "fg"}; /* built in cmds */
-static const int NUM_BUILT_IN_CMDS = 4;
 
 /* End global variables */
 
@@ -104,7 +103,7 @@ int main(int argc, char **argv)
     dup2(1, 2);
 
     /* Parse the command line */
-    while ((c = getopt(argc, argv, "hvp")) != EOF) {v
+    while ((c = getopt(argc, argv, "hvp")) != EOF) {
         switch (c) {
         case 'h':             /* print help message */
             usage();
@@ -174,24 +173,18 @@ void eval(char *cmdline)
     int bg_job = 1;
     static char* argv[MAXARGS] = {};
 
-    int i = 0; //So, my compiler at home complains about this, tux may not
     int result = 0;
     int pid = 0;
-
+    int status;
+ 
     bg_job = parseline(cmdline, argv);
 
     //immediately handle built in commands
-    for (i = 0; i < NUM_BUILT_IN_CMDS; ++i){
-	if (0 == strcmp(builtin_cmds[i], argv[0])){
-
-	    result = builtin_cmd(argv);
-	    return; //go back to the read / eval / loop
-
-	}
-
-    }
+    if (builtin_cmd(argv)) return;	
 
     //Need some job management here, but this is the flow, I think
+    //To Do: If (bg_job) Then run job in background and don't wait for child to end
+    //all other job management should be handled in do_bgfg(), which is called in builtin_cmd() 
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
 
@@ -200,9 +193,11 @@ void eval(char *cmdline)
 	exit(1);
     }
     else if (0 == pid){ /*child*/
-	result = execvp(argv[0], &argv[1]);
+	result = execvp(argv[0], &argv[0]);
+	exit(0);
     }
-
+    
+    pid = waitpid(pid, &status, 0);
 
     return;
 }
@@ -271,7 +266,22 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv)
 {
-    return 0;     /* not a builtin command */
+	int i = 0;
+
+	if (strcmp(argv[0], builtin_cmds[i++]) == 0){/*quit*/
+		exit(0);
+	}else if (strcmp(argv[0], builtin_cmds[i++]) == 0){/*jobs*/
+		/*list jobs*/
+		listjobs(jobs);
+		return 1;
+	}
+	else if ((strcmp(argv[0], builtin_cmds[i++]) == 0) || (strcmp(argv[0], builtin_cmds[i]) == 0)) {/*bg or fg*/
+		do_bgfg(argv);
+		return 1;
+	}
+	else{
+		return 0;     /* not a builtin command */
+	}
 }
 
 /*
@@ -457,9 +467,9 @@ int pid2jid(pid_t pid)
 /* listjobs - Print the job list */
 void listjobs(struct job_t *jobs)
 {
-    int i;
+    int i, numjobs;;
 
-    for (i = 0; i < MAXJOBS; i++) {
+    for (numjobs = i = 0; i < MAXJOBS; i++) {
 	if (jobs[i].pid != 0) {
 	    printf("[%d] (%d) ", jobs[i].jid, jobs[i].pid);
 	    switch (jobs[i].state) {
@@ -477,8 +487,13 @@ void listjobs(struct job_t *jobs)
 			   i, jobs[i].state);
 	    }
 	    printf("%s", jobs[i].cmdline);
+	    numjobs++;
 	}
     }
+	
+    //if there are no jobs, report as much
+    if (numjobs == 0)
+	printf("No jobs currently exist\n");
 }
 /******************************
  * end job list helper routines
