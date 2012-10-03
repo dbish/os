@@ -175,29 +175,40 @@ void eval(char *cmdline)
 
     int result = 0;
     int pid = 0;
-    int status;
- 
+
+
     bg_job = parseline(cmdline, argv);
 
+    if (bg_job < 0) return; /* emtpty line */
+
     //immediately handle built in commands
-    if (builtin_cmd(argv)) return;	
+    if (builtin_cmd(argv)) return;
 
     //Need some job management here, but this is the flow, I think
     //To Do: If (bg_job) Then run job in background and don't wait for child to end
-    //all other job management should be handled in do_bgfg(), which is called in builtin_cmd() 
+    //all other job management should be handled in do_bgfg(), which is called in builtin_cmd()
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
 
     if ((pid = fork()) < 0){
-	printf("fork error\n");
-	exit(1);
+	app_error("fork error\n");
     }
-    else if (0 == pid){ /*child*/
+    if (0 == pid){ /*child*/
 	result = execvp(argv[0], &argv[0]);
-	exit(0);
+
     }
-    
-    pid = waitpid(pid, &status, 0);
+    else {
+	if (bg_job){
+	    //Add job as a background job
+	    addjob(jobs, pid, BG, cmdline);
+
+	} else {
+	    addjob(jobs, pid, FG, cmdline);
+	    waitfg(pid);
+	}
+    }
+
+
 
     return;
 }
@@ -251,7 +262,7 @@ int parseline(const char *cmdline, char **argv)
     argv[argc] = NULL;
 
     if (argc == 0)  /* ignore blank line */
-	return 1;
+	return -1;
 
     /* should the job run in the background? */
     if ((bg = (*argv[argc-1] == '&')) != 0) {
@@ -297,6 +308,23 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+
+    int status = 0;
+    struct job_t * j = 0;
+
+    pid = waitpid(pid, &status, 0);
+
+
+    if (-1 == pid)
+	app_error("waitpid error");
+
+    /* job is done running */
+    j = getjobpid(jobs, pid);
+
+    if (NULL == j) app_error("Job should not be null");
+
+    j->state = ST;
+
     return;
 }
 
@@ -490,7 +518,7 @@ void listjobs(struct job_t *jobs)
 	    numjobs++;
 	}
     }
-	
+
     //if there are no jobs, report as much
     if (numjobs == 0)
 	printf("No jobs currently exist\n");
