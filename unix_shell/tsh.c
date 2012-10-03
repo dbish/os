@@ -203,6 +203,7 @@ void eval(char *cmdline)
 	    addjob(jobs, pid, BG, cmdline);
 
 	} else {
+	    /* Add to list, if interrupted it will be marked as FG */
 	    addjob(jobs, pid, FG, cmdline);
 	    waitfg(pid);
 	}
@@ -310,24 +311,17 @@ void waitfg(pid_t pid)
 {
 
     int status = 0;
-    struct job_t * j = 0;
 
     pid = waitpid(pid, &status, 0);
-
 
     if (-1 == pid)
 	app_error("waitpid error");
 
-    /* job is done running */
-    j = getjobpid(jobs, pid);
-
-    if (NULL == j) app_error("Job should not be null");
-
-    j->state = ST;
+    if (0 == deletejob(jobs, pid))
+	app_error("Error deleting job");
 
     return;
 }
-
 /*****************
  * Signal handlers
  *****************/
