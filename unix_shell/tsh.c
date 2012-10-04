@@ -301,6 +301,32 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv)
 {
+    struct job_t *job;
+    int id;
+
+    //check for jid or pid
+    if (argv[1][0] == '%'){
+    	//jid
+        id = atoi(strtok(argv[1], "%"));
+	job = getjobjid(jobs, id);      
+    }else{
+   	id = atoi(argv[1]);
+	job = getjobpid(jobs, id);
+    }
+
+    if (strcmp(argv[0], builtin_cmds[2]) == 0){/*bg*/
+    	if (job->state == ST){
+		job->state = BG;
+		//run the job
+		kill(job->pid, SIGCONT);		
+	}
+    }else{/*fg*/
+    	if ((job->state == ST)||(job->state == FG)){
+		job->state = FG;
+		//run the job and wait for it to complete
+	}
+    }
+
     return;
 }
 
@@ -310,6 +336,7 @@ void do_bgfg(char **argv)
 void waitfg(pid_t pid)
 {
 
+    struct job_t *job;
     int status = 0;
 
     pid = waitpid(pid, &status, 0);
@@ -317,8 +344,11 @@ void waitfg(pid_t pid)
     if (-1 == pid)
 	app_error("waitpid error");
 
-    if (0 == deletejob(jobs, pid))
-	app_error("Error deleting job");
+    job = getjobpid(jobs, pid);
+    if (job->state == FG){
+	    if (0 == deletejob(jobs, pid))
+		app_error("Error deleting job");
+    }
 
     return;
 }
@@ -345,6 +375,16 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig)
 {
+    pid_t fpid;
+    //get pid of fg process
+    
+    fpid = fgpid(jobs);
+    
+    //kill job
+    kill(-fpid, sig);
+
+    printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(fpid), fpid, sig);
+
     return;
 }
 
@@ -355,6 +395,20 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig)
 {
+    pid_t fpid;
+    //get pid of fg process
+    struct job_t *job;
+    fpid = fgpid(jobs);
+
+    job = getjobpid(jobs, fpid);
+    job->state = ST;
+
+    //stop job
+    kill(-fpid, sig);
+
+    printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(fpid), fpid, sig);
+    
+
     return;
 }
 
@@ -401,6 +455,7 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
     if (pid < 1)
 	return 0;
 
+
     for (i = 0; i < MAXJOBS; i++) {
 	if (jobs[i].pid == 0) {
 	    jobs[i].pid = pid;
@@ -412,6 +467,11 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
   	    if(verbose){
 	        printf("Added job [%d] %d %s\n", jobs[i].jid, jobs[i].pid, jobs[i].cmdline);
             }
+
+	    //added to copy the output of the reference shell
+	    if (state == BG){
+	        printf("[%d] (%d) %s", jobs[i].jid, jobs[i].pid, jobs[i].cmdline);
+	    }
             return 1;
 	}
     }
@@ -513,9 +573,6 @@ void listjobs(struct job_t *jobs)
 	}
     }
 
-    //if there are no jobs, report as much
-    if (numjobs == 0)
-	printf("No jobs currently exist\n");
 }
 /******************************
  * end job list helper routines
