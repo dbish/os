@@ -176,6 +176,10 @@ void eval(char *cmdline)
     int result = 0;
     int pid = 0;
 
+    //init mask for blocking sigchld signals
+    sigset_t *mask;
+    sigemptyset(mask);
+    sigaddset(mask, SIGCHLD);
 
     bg_job = parseline(cmdline, argv);
 
@@ -190,12 +194,16 @@ void eval(char *cmdline)
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
 
+    //block sigchld_handler while forking
+    sigprocmask(SIG_BLOCK, mask, NULL);
+
     if ((pid = fork()) < 0){
 	app_error("fork error\n");
     }
     if (0 == pid){ /*child*/
+	//unblock sigchld for child
+	sigprocmask(SIG_UNBLOCK, mask, NULL);
 	result = execvp(argv[0], &argv[0]);
-
     }
     else {
 	if (bg_job){
@@ -207,6 +215,9 @@ void eval(char *cmdline)
 	    addjob(jobs, pid, FG, cmdline);
 	    waitfg(pid);
 	}
+
+        //unblock sigchld for parent
+	sigprocmask(SIG_UNBLOCK, mask, NULL);
     }
 
 
@@ -346,8 +357,8 @@ void waitfg(pid_t pid)
 
     job = getjobpid(jobs, pid);
     if (job->state == FG){
-	    if (0 == deletejob(jobs, pid))
-		app_error("Error deleting job");
+    	    if (0 == deletejob(jobs, pid))
+    		app_error("Error deleting fg job");
     }
 
     return;
@@ -365,6 +376,20 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig)
 {
+    int status = 0;
+ 
+    //only ctach jobs that have terminated
+    if (sig == SIGSTOP){ 
+	    //get the pid of the job that terminated
+	    pid_t pid;
+	    pid = waitpid(-1, &status, WNOHANG);
+	    
+	    //if it is a background job, take it off the jobs list
+	    if (pid != -1){
+		if (deletejob(jobs, pid) == 0)
+			app_error("Error deleting job");
+	    }
+    }
     return;
 }
 
