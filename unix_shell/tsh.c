@@ -177,9 +177,12 @@ void eval(char *cmdline)
     int pid = 0;
 
     //init mask for blocking sigchld signals
-    sigset_t *mask;
-    sigemptyset(mask);
-    sigaddset(mask, SIGCHLD);
+    sigset_t mask;
+    if (-1 == sigemptyset(&mask) )
+      app_error("Sigempty set failed");
+
+    if (-1 == sigaddset(&mask, SIGCHLD))
+      app_error("sigaddset failed");
 
     bg_job = parseline(cmdline, argv);
 
@@ -195,14 +198,17 @@ void eval(char *cmdline)
     //Need to handle pipes, i.e. this needs to work "ls . | more"
 
     //block sigchld_handler while forking
-    sigprocmask(SIG_BLOCK, mask, NULL);
+    if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
+      app_error("Sigprocmask died before fork");
 
     if ((pid = fork()) < 0){
 	app_error("fork error\n");
     }
     if (0 == pid){ /*child*/
 	//unblock sigchld for child
-	sigprocmask(SIG_UNBLOCK, mask, NULL);
+      if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
+	app_error("Sigprocmask died after fork");
+
 	result = execvp(argv[0], &argv[0]);
     }
     else {
@@ -217,7 +223,8 @@ void eval(char *cmdline)
 	}
 
         //unblock sigchld for parent
-	sigprocmask(SIG_UNBLOCK, mask, NULL);
+	if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
+	  app_error("Sigprocmask died while unblocking");
     }
 
 
@@ -319,7 +326,7 @@ void do_bgfg(char **argv)
     if (argv[1][0] == '%'){
     	//jid
         id = atoi(strtok(argv[1], "%"));
-	job = getjobjid(jobs, id);      
+	job = getjobjid(jobs, id);
     }else{
    	id = atoi(argv[1]);
 	job = getjobpid(jobs, id);
@@ -329,7 +336,7 @@ void do_bgfg(char **argv)
     	if (job->state == ST){
 		job->state = BG;
 		//run the job
-		kill(job->pid, SIGCONT);		
+		kill(job->pid, SIGCONT);
 	}
     }else{/*fg*/
     	if ((job->state == ST)||(job->state == FG)){
@@ -377,13 +384,13 @@ void waitfg(pid_t pid)
 void sigchld_handler(int sig)
 {
     int status = 0;
- 
+
     //only ctach jobs that have terminated
-    if (sig == SIGSTOP){ 
+    if (sig == SIGSTOP){
 	    //get the pid of the job that terminated
 	    pid_t pid;
 	    pid = waitpid(-1, &status, WNOHANG);
-	    
+
 	    //if it is a background job, take it off the jobs list
 	    if (pid != -1){
 		if (deletejob(jobs, pid) == 0)
@@ -402,9 +409,9 @@ void sigint_handler(int sig)
 {
     pid_t fpid;
     //get pid of fg process
-    
+
     fpid = fgpid(jobs);
-    
+
     //kill job
     kill(-fpid, sig);
 
@@ -432,7 +439,7 @@ void sigtstp_handler(int sig)
     kill(-fpid, sig);
 
     printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(fpid), fpid, sig);
-    
+
 
     return;
 }
