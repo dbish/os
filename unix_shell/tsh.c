@@ -278,7 +278,7 @@ int parseline(const char *cmdline, char **argv, int *argn)
     }
     argv[argc] = NULL;
 
-    *argn = argc;	
+    *argn = argc;
 
     if (argc == 0)  /* ignore blank line */
 	return -1;
@@ -382,7 +382,7 @@ void waitfg(pid_t pid)
 	app_error("waitpid error");
 
     job = getjobpid(jobs, pid);
-    if (job->state == FG){ 
+    if (job->state == FG){
     	    if (0 == deletejob(jobs, pid))
     		app_error("Error deleting fg job");
     }
@@ -402,21 +402,21 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig)
 {
-    int status = 0;
-    pid_t pid;
-  
-    //only ctach jobs that have terminated
-    if (sig == SIGSTOP) {
-	    //get the pid of the job that terminated
-	    pid = waitpid(-1, &status, WNOHANG);
+  int status = 0;
+  pid_t pid;
 
-	    //if it is a background job, take it off the jobs list
-	    if (pid != -1){
-		if (deletejob(jobs, pid) == 0)
-			app_error("Error deleting a job");
-	    }
+  errno = 0;
+  //only ctach jobs that have terminated
+  if (sig == SIGCHLD) {
+    //get the pid of the job that terminated
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0){
+      if (deletejob(jobs, pid) == 0)
+	app_error("Error deleting a job");
     }
-    return;
+
+  }
+
+  return;
 }
 
 /*
