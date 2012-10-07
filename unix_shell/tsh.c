@@ -173,7 +173,6 @@ void eval(char *cmdline)
     int bg_job = 1;
     static char* argv[MAXARGS] = {};
 
-    int result = 0;
     int pid = 0;
     int argc = 0;
 
@@ -189,43 +188,43 @@ void eval(char *cmdline)
 
     if (bg_job < 0) return; /* emtpty line */
 
-    //immediately handle built in commands
-    if (builtin_cmd(argv, argc)) return;
-
-    //Need some job management here, but this is the flow, I think
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
+    if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/ 
+	    //block sigchld_handler while forking
+	if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
+		app_error("Sigprocmask died before fork");
 
-    //block sigchld_handler while forking
-    if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
-      app_error("Sigprocmask died before fork");
+	if ((pid = fork()) < 0)
+		app_error("fork error\n");
+    
+	if (0 == pid){ /*child*/
+		//unblock sigchld for child
+		if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
+			app_error("Sigprocmask died after fork");
+		setpgid(0,0);
 
-    if ((pid = fork()) < 0){
-	app_error("fork error\n");
-    }
-    if (0 == pid){ /*child*/
-	//unblock sigchld for child
-      if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
-	app_error("Sigprocmask died after fork");
-        setpgid(0,0);
-	result = execvp(argv[0], &argv[0]);
-    }
-    else {
+		//execute process
+                if (execve(argv[0], argv, environ) < 0){
+			printf("%s: Command not found.\n", argv[0]);
+			exit(0);
+		}
+	}
+	/*parent handles child job processing*/
 	if (bg_job){
-	    //Add job as a background job
-	    addjob(jobs, pid, BG, cmdline);
+		//Add job as a background job
+		addjob(jobs, pid, BG, cmdline);
 
 	} else {
-	    /* Add to list, if interrupted it will be marked as FG */
-	    addjob(jobs, pid, FG, cmdline);
-	    waitfg(pid);
+		/* Add to list, if interrupted it will be marked as FG */
+		addjob(jobs, pid, FG, cmdline);
+		waitfg(pid);
 	}
 
         //unblock sigchld for parent
 	if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
-	  app_error("Sigprocmask died while unblocking");
+		app_error("Sigprocmask died while unblocking");
     }
-
 
 
     return;
