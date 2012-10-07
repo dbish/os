@@ -192,8 +192,6 @@ void eval(char *cmdline)
     if (builtin_cmd(argv)) return;
 
     //Need some job management here, but this is the flow, I think
-    //To Do: If (bg_job) Then run job in background and don't wait for child to end
-    //all other job management should be handled in do_bgfg(), which is called in builtin_cmd()
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
 
@@ -208,7 +206,7 @@ void eval(char *cmdline)
 	//unblock sigchld for child
       if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
 	app_error("Sigprocmask died after fork");
-
+        setpgid(0,0);
 	result = execvp(argv[0], &argv[0]);
     }
     else {
@@ -321,6 +319,7 @@ void do_bgfg(char **argv)
 {
     struct job_t *job;
     int id;
+    int status = 0;
 
     //check for jid or pid
     if (argv[1][0] == '%'){
@@ -339,9 +338,14 @@ void do_bgfg(char **argv)
 		kill(job->pid, SIGCONT);
 	}
     }else{/*fg*/
-    	if ((job->state == ST)||(job->state == FG)){
-		job->state = FG;
+    	if ((job->state == ST)||(job->state == BG)){
 		//run the job and wait for it to complete
+		if (kill(job->pid, SIGCONT) == -1)
+			printf("ERROR pid:%d\n", job->pid);
+		else{
+			job->state = FG;
+			waitpid(job->pid, &status, 0);
+		}
 	}
     }
 
@@ -357,13 +361,13 @@ void waitfg(pid_t pid)
     struct job_t *job;
     int status = 0;
 
-    pid = waitpid(pid, &status, 0);
+    pid = waitpid(pid, &status, WUNTRACED);
 
     if (-1 == pid)
 	app_error("waitpid error");
 
     job = getjobpid(jobs, pid);
-    if (job->state == FG){
+    if (job->state == FG){ 
     	    if (0 == deletejob(jobs, pid))
     		app_error("Error deleting fg job");
     }
@@ -384,17 +388,17 @@ void waitfg(pid_t pid)
 void sigchld_handler(int sig)
 {
     int status = 0;
-
+    pid_t pid;
+  
     //only ctach jobs that have terminated
-    if (sig == SIGSTOP){
+    if (sig == SIGSTOP) {
 	    //get the pid of the job that terminated
-	    pid_t pid;
 	    pid = waitpid(-1, &status, WNOHANG);
 
 	    //if it is a background job, take it off the jobs list
 	    if (pid != -1){
 		if (deletejob(jobs, pid) == 0)
-			app_error("Error deleting job");
+			app_error("Error deleting a job");
 	    }
     }
     return;
@@ -436,10 +440,10 @@ void sigtstp_handler(int sig)
     job->state = ST;
 
     //stop job
-    kill(-fpid, sig);
+    if (kill(-fpid, SIGTSTP)== -1)
+	app_error("failed sig stop handling");
 
     printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(fpid), fpid, sig);
-
 
     return;
 }
