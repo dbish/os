@@ -60,8 +60,8 @@ static const char * builtin_cmds[] = {"quit", "jobs", "bg", "fg"}; /* built in c
 
 /* Here are the functions that you will implement */
 void eval(char *cmdline);
-int builtin_cmd(char **argv);
-void do_bgfg(char **argv);
+int builtin_cmd(char **argv, int argc);
+void do_bgfg(char **argv, int argc);
 void waitfg(pid_t pid);
 
 void sigchld_handler(int sig);
@@ -69,7 +69,7 @@ void sigtstp_handler(int sig);
 void sigint_handler(int sig);
 
 /* Here are helper routines that we've provided for you */
-int parseline(const char *cmdline, char **argv);
+int parseline(const char *cmdline, char **argv, int *argn);
 void sigquit_handler(int sig);
 
 void clearjob(struct job_t *job);
@@ -175,6 +175,7 @@ void eval(char *cmdline)
 
     int result = 0;
     int pid = 0;
+    int argc = 0;
 
     //init mask for blocking sigchld signals
     sigset_t mask;
@@ -184,12 +185,12 @@ void eval(char *cmdline)
     if (-1 == sigaddset(&mask, SIGCHLD))
       app_error("sigaddset failed");
 
-    bg_job = parseline(cmdline, argv);
+    bg_job = parseline(cmdline, argv, &argc);
 
     if (bg_job < 0) return; /* emtpty line */
 
     //immediately handle built in commands
-    if (builtin_cmd(argv)) return;
+    if (builtin_cmd(argv, argc)) return;
 
     //Need some job management here, but this is the flow, I think
 
@@ -237,14 +238,13 @@ void eval(char *cmdline)
  * argument.  Return true if the user has requested a BG job, false if
  * the user has requested a FG job.
  */
-int parseline(const char *cmdline, char **argv)
+int parseline(const char *cmdline, char **argv, int *argn)
 {
     static char array[MAXLINE]; /* holds local copy of command line */
     char *buf = array;          /* ptr that traverses command line */
     char *delim;                /* points to first space delimiter */
-    int argc;                   /* number of args */
     int bg;                     /* background job? */
-
+    int argc;			/*number of args*/
 
     strcpy(buf, cmdline);
     buf[strlen(buf)-1] = ' ';  /* replace trailing '\n' with space */
@@ -278,6 +278,8 @@ int parseline(const char *cmdline, char **argv)
     }
     argv[argc] = NULL;
 
+    *argn = argc;	
+
     if (argc == 0)  /* ignore blank line */
 	return -1;
 
@@ -292,7 +294,7 @@ int parseline(const char *cmdline, char **argv)
  * builtin_cmd - If the user has typed a built-in command then execute
  *    it immediately.
  */
-int builtin_cmd(char **argv)
+int builtin_cmd(char **argv, int argc)
 {
 	int i = 0;
 
@@ -304,7 +306,7 @@ int builtin_cmd(char **argv)
 		return 1;
 	}
 	else if ((strcmp(argv[0], builtin_cmds[i++]) == 0) || (strcmp(argv[0], builtin_cmds[i]) == 0)) {/*bg or fg*/
-		do_bgfg(argv);
+		do_bgfg(argv, argc);
 		return 1;
 	}
 	else{
@@ -315,20 +317,33 @@ int builtin_cmd(char **argv)
 /*
  * do_bgfg - Execute the builtin bg and fg commands
  */
-void do_bgfg(char **argv)
+void do_bgfg(char **argv, int argc)
 {
     struct job_t *job;
     int id;
     int status = 0;
+
+    if(argc == 1){
+	printf("%s command required PID or %%jobid arguments\n", argv[0]);
+	return;
+    }
 
     //check for jid or pid
     if (argv[1][0] == '%'){
     	//jid
         id = atoi(strtok(argv[1], "%"));
 	job = getjobjid(jobs, id);
+	if (job == NULL){
+		printf("%%%d: No such job\n", id);
+		return;
+	}
     }else{
    	id = atoi(argv[1]);
 	job = getjobpid(jobs, id);
+	if (job == NULL){
+		printf("(%d): No such process\n", id);
+		return;
+	}
     }
 
     if (strcmp(argv[0], builtin_cmds[2]) == 0){/*bg*/
