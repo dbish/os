@@ -320,23 +320,34 @@ void do_bgfg(char **argv, int argc)
 {
     struct job_t *job;
     int id;
+    char *end_ptr;
+    char *str_id;
 
     if(argc == 1){
-	printf("%s command required PID or %%jobid arguments\n", argv[0]);
+	printf("%s command required PID or %%jobid argument\n", argv[0]);
 	return;
     }
 
     //check for jid or pid
     if (argv[1][0] == '%'){
     	//jid
-        id = atoi(strtok(argv[1], "%"));
+        str_id = strtok(argv[1], "%");
+	id = strtol(str_id, &end_ptr, 0);
+	if (end_ptr[0] != '\0'){
+		printf("%s command required PID or %%jobid argument\n", argv[0]);
+		return;
+	}
 	job = getjobjid(jobs, id);
 	if (job == NULL){
 		printf("%%%d: No such job\n", id);
 		return;
 	}
     }else{
-   	id = atoi(argv[1]);
+	id = strtol(argv[1], &end_ptr, 0);
+	if (end_ptr[0] != '\0'){
+		printf("%s command required PID or %%jobid argument\n", argv[0]);
+		return;
+	}
 	job = getjobpid(jobs, id);
 	if (job == NULL){
 		printf("(%d): No such process\n", id);
@@ -348,12 +359,15 @@ void do_bgfg(char **argv, int argc)
     	if (job->state == ST){
 		job->state = BG;
 		//run the job
-		kill(job->pid, SIGCONT);
+		if (kill(-job->pid, SIGCONT) == -1)
+			app_error("unable to restart stopped job");
+		else
+			printf("[%d] (%d) %s", job->jid, job->pid, job->cmdline);
 	}
     }else{/*fg*/
     	if ((job->state == ST)||(job->state == BG)){
 		//run the job and wait for it to complete
-		if (kill(job->pid, SIGCONT) == -1)
+		if (kill(-job->pid, SIGCONT) == -1)
 			printf("ERROR pid:%d\n", job->pid);
 		else{
 			job->state = FG;
