@@ -190,14 +190,14 @@ void eval(char *cmdline)
 
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
-    if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/ 
+    if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/
 	    //block sigchld_handler while forking
 	if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
 		app_error("Sigprocmask died before fork");
 
 	if ((pid = fork()) < 0)
 		app_error("fork error\n");
-    
+
 	if (0 == pid){ /*child*/
 		//unblock sigchld for child
 		if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
@@ -320,7 +320,6 @@ void do_bgfg(char **argv, int argc)
 {
     struct job_t *job;
     int id;
-    int status = 0;
 
     if(argc == 1){
 	printf("%s command required PID or %%jobid arguments\n", argv[0]);
@@ -358,7 +357,7 @@ void do_bgfg(char **argv, int argc)
 			printf("ERROR pid:%d\n", job->pid);
 		else{
 			job->state = FG;
-			waitpid(job->pid, &status, 0);
+			waitfg(job->pid);
 		}
 	}
     }
@@ -431,9 +430,12 @@ void sigint_handler(int sig)
     fpid = fgpid(jobs);
 
     //kill job
-    kill(-fpid, sig);
+    if (fpid > 0) {
+      kill(-fpid, sig);
 
-    printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(fpid), fpid, sig);
+      printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(fpid), fpid, sig);
+
+    }
 
     return;
 }
@@ -451,6 +453,12 @@ void sigtstp_handler(int sig)
     fpid = fgpid(jobs);
 
     job = getjobpid(jobs, fpid);
+
+    //can't sleep the shell
+    if (job <= 0 )
+      return;
+
+    //otherwise, change the job statec
     job->state = ST;
 
     //stop job
