@@ -52,6 +52,12 @@ struct job_t {              /* The job struct */
 struct job_t jobs[MAXJOBS]; /* The job list */
 
 static const char * builtin_cmds[] = {"quit", "jobs", "bg", "fg"}; /* built in cmds */
+static const char * pipes[] = {"|", "<", ">"};
+struct pipe_info_t
+{
+  char * pipe_char;         /* pointer to the pipe char*/
+  int index;                /* the index in the command line where the pipe was found*/
+};
 
 /* End global variables */
 
@@ -88,6 +94,8 @@ void unix_error(char *msg);
 void app_error(char *msg);
 typedef void handler_t(int);
 handler_t *Signal(int signum, handler_t *handler);
+
+int find_pipe(char **argv, int argc, struct pipe_info_t *pipe_info);
 
 /*
  * main - The shell's main routine
@@ -176,6 +184,11 @@ void eval(char *cmdline)
     int pid = 0;
     int argc = 0;
 
+    int pipefd[2];  /* pipe fd array */
+
+    struct pipe_info_t pipe_info = {};
+    int pipe_found = 0;
+
     //init mask for blocking sigchld signals
     sigset_t mask;
     if (-1 == sigemptyset(&mask) )
@@ -188,6 +201,13 @@ void eval(char *cmdline)
 
     if (bg_job < 0) return; /* emtpty line */
 
+    //if pipe is found, the struct will be filled in
+    pipe_found = find_pipe(argv, argc, &pipe_info);
+
+    if (pipe_found){
+      //if (-1 == pipe(pipefd))
+      //app_error("pipe died");
+    }
 
     //Need to handle pipes, i.e. this needs to work "ls . | more"
     if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/
@@ -202,14 +222,17 @@ void eval(char *cmdline)
 		//unblock sigchld for child
 		if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
 			app_error("Sigprocmask died after fork");
+
 		setpgid(0,0);
 
 		//execute process
-                if (execve(argv[0], argv, environ) < 0){
+                if (execvp(argv[0], argv) < 0){
 			printf("%s: Command not found.\n", argv[0]);
 			exit(0);
 		}
 	}
+
+
 	/*parent handles child job processing*/
 	if (bg_job){
 		//Add job as a background job
@@ -709,4 +732,30 @@ void sigquit_handler(int sig)
 {
     printf("Terminating after receipt of SIGQUIT signal\n");
     exit(1);
+}
+
+int find_pipe(char **argv, int argc, struct pipe_info_t *pipe_info)
+{
+  int i = 0;
+  int x = 0;
+
+
+  for (i = 0; i < argc; ++i)
+    {
+      for (x = 0; x < 3; ++x)
+	{
+	  if (0 == strcmp(pipes[x], *argv))
+	    {
+	      pipe_info->pipe_char = pipes[x];
+	      pipe_info->index = i;
+	      printf("pipe found: %s at index: %d\n", pipe_info->pipe_char, i);
+	      return 1;
+	    }
+	}
+
+      argv++;
+    }
+
+
+  return 0;
 }
