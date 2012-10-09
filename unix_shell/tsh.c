@@ -225,10 +225,18 @@ void eval(char *cmdline)
 
 		setpgid(0,0);
 
+		if (pipe_found){
+		  close(pipefd[1]); //unused write end
+		  dup2(0, pipefd[0]); /*grab from the stdin*/
+		}
 		//execute process
                 if (execvp(argv[0], argv) < 0){
 			printf("%s: Command not found.\n", argv[0]);
 			exit(0);
+		}
+
+		if (pipe_found){
+		  close(pipefd[1]);
 		}
 	}
 
@@ -241,7 +249,14 @@ void eval(char *cmdline)
 	} else {
 		/* Add to list, if interrupted it will be marked as FG */
 		addjob(jobs, pid, FG, cmdline);
+		if (pipe_found){
+		  close(pipefd[0]); //unused read end
+		  dup2(1, pipefd[1]);
+		}
 		waitfg(pid);
+		if (pipe_found){
+		  close(pipefd[1]);
+		}
 	}
 
         //unblock sigchld for parent
