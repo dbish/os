@@ -239,12 +239,12 @@ void eval(char *cmdline)
  	app_error("Sigprocmask died while unblocking");
 
     //if pipe is found, the struct will be filled in
-    pipe_found = find_pipe(argv, argc, &pipe_info);
+    //pipe_found = find_pipe(argv, argc, &pipe_info);
 
-    if (pipe_found){
+    //if (pipe_found){
       //if (-1 == pipe(pipefd))
       //app_error("pipe died");
-    }
+    //}
 
     return;
 }
@@ -293,9 +293,9 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 			exit(0);
 		}
 
-		if (pipe_found){
-		  close(pipefd[1]);
-		}
+		//if (pipe_found){
+		//  close(pipefd[1]);
+		//}
 	}
 
 
@@ -308,9 +308,9 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 		/* Add to list, if interrupted it will be marked as FG */
 		addjob(jobs, pid, FG, cmdline, fd, pipe_status);
 		waitfg(pid);
-		if (pipe_found){
-		  close(pipefd[1]);
-		}
+		//if (pipe_found){
+		//  close(pipefd[1]);
+		//}
 	}
 
     }
