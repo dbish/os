@@ -200,7 +200,7 @@ void eval(char *cmdline)
 
 
     //set up piping if in the command line
-    /*temp_p = strtok(cmdline, "|");
+    temp_p = strtok(cmdline, "|");
     temp_p = strtok(NULL, "|");
     if (temp_p != NULL){
 	pipe_status = 0;
@@ -212,14 +212,14 @@ void eval(char *cmdline)
     }
     else{
 	strncpy(cmdline_one, cmdline, MAXLINE-1);
-    }*/
+    }
 
-   // if (pipe_status == 0) {
-//	forkchild(cmdline_two, &mask, 1, fd);
-  //  	forkchild(cmdline_one, &mask, 0, fd);
-    //}else{
+    if (pipe_status == 0) {
+	forkchild(cmdline_two, &mask, 1, fd);
+   	forkchild(cmdline_one, &mask, 0, fd);
+   }else{
     	forkchild(cmdline, &mask, pipe_status , fd);
-    //}
+    }
 
     //unblock sigchld for parent
     if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
@@ -251,25 +251,25 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 		setpgid(0,0);
 
 		    //close end of pipe not being used
-		    //if (pipe_status == 0) {
-		 //	close(fd[0]);
-		//	dup2(STDOUT_FILENO, fd[1]);
-		  //  }else if (pipe_status == 1){
-		//	close(fd[1]);
-		//	dup2(STDIN_FILENO, fd[0]);
-		  //  }
-		FILE *fp;
+		    if (pipe_status == 0) {
+		 	close(fd[0]);
+			dup2(STDOUT_FILENO, fd[1]);
+		    }else if (pipe_status == 1){
+			close(fd[1]);
+			dup2(STDIN_FILENO, fd[0]);
+		    }
+		//FILE *fp;
 		//fp = popen(cmdline, "w");
-		execvpe(cmdline, cmdline, environ);
+		//execvpe(cmdline, cmdline, environ);
 		//char path[50];
 	        //while (fgets(path, 50, fp) != NULL)
 		//	printf("%s", path);
 		//pclose(fp);	
 		//execute process
-                //if (execvpe(argv[0], argv, environ) < 0){
-		//	printf("%s: Command not found.\n", argv[0]);
-		//	exit(0);
-		//}
+                if (execvpe(argv[0], argv, environ) < 0){
+			printf("%s: Command not found.\n", argv[0]);
+			exit(0);
+		}
 	}
 	/*parent handles child job processing*/
 	if (bg_job){
