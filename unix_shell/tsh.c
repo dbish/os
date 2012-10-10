@@ -48,7 +48,7 @@ struct job_t {              /* The job struct */
     int jid;                /* job ID [1, 2, ...] */
     int state;              /* UNDEF, BG, FG, or ST */
     char cmdline[MAXLINE];  /* command line */
-    int *fd; 
+    int *fd;
     int pipe_st;
 };
 struct job_t jobs[MAXJOBS]; /* The job list */
@@ -237,8 +237,8 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 
 
     bg_job = parseline(cmdline, argv, &argc);
-    if (bg_job < 0) return; /*empty line*/  
- 
+    if (bg_job < 0) return; /*empty line*/
+
     if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/
 
 	if ((pid = fork()) < 0)
@@ -264,7 +264,7 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 		//char path[50];
 	        //while (fgets(path, 50, fp) != NULL)
 		//	printf("%s", path);
-		//pclose(fp);	
+		//pclose(fp);
 		//execute process
                 if (execvpe(argv[0], argv, environ) < 0){
 			printf("%s: Command not found.\n", argv[0]);
@@ -286,7 +286,7 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 
     return;
 }
- 
+
 
 /*
  * parseline - Parse the command line and build the argv array.
@@ -459,9 +459,14 @@ void waitfg(pid_t pid)
     //		close(job->fd[0]);
     //}
 
-    if (job->state == FG){
-    	    if (0 == deletejob(jobs, pid))
-    		app_error("Error deleting fg job");
+    if(0 != status && WIFSTOPPED(status)){
+	//job was in the FG but received the stop signal
+	job->state = ST;
+    }
+    else if (job->state == FG){
+	//this will catch the situation where status is WIFSTOPPED as well
+	if (0 == deletejob(jobs, pid))
+	    app_error("Error deleting fg job");
     }
 
     return;
