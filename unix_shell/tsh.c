@@ -248,6 +248,7 @@ void eval(char *cmdline)
 
 	} else {
 		/* Add to list, if interrupted it will be marked as FG */
+
 		addjob(jobs, pid, FG, cmdline);
 		if (pipe_found){
 		  close(pipefd[0]); //unused read end
@@ -432,9 +433,16 @@ void waitfg(pid_t pid)
 	app_error("waitpid error");
 
     job = getjobpid(jobs, pid);
-    if (job->state == FG){
-    	    if (0 == deletejob(jobs, pid))
-    		app_error("Error deleting fg job");
+
+    if(0 != status && WIFSTOPPED(status)){
+	//job was in the FG but received the stop signal
+	job->state = ST;
+    }
+
+    else if (job->state == FG){
+	//this will catch the situation where status is WIFSTOPPED as well
+	if (0 == deletejob(jobs, pid))
+	    app_error("Error deleting fg job");
     }
 
     return;
@@ -455,16 +463,16 @@ void sigchld_handler(int sig)
   int status = 0;
   pid_t pid;
 
-  errno = 0;
   //only ctach jobs that have terminated
   if (sig == SIGCHLD) {
-    //get the pid of the job that terminated
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0){
-      if (deletejob(jobs, pid) == 0)
-	app_error("Error deleting a job");
-    }
+      //get the pid of the job that terminated
+      while ((pid = waitpid(-1, &status, WNOHANG)) > 0){
+	  if (deletejob(jobs, pid) == 0)
+	      app_error("Error deleting a job");
+      }
 
   }
+
 
   return;
 }
@@ -476,6 +484,7 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig)
 {
+
     pid_t fpid;
     //get pid of fg process
 
@@ -499,6 +508,8 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig)
 {
+
+
     pid_t fpid;
     //get pid of fg process
     struct job_t *job;
@@ -564,7 +575,6 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
 
     if (pid < 1)
 	return 0;
-
 
     for (i = 0; i < MAXJOBS; i++) {
 	if (jobs[i].pid == 0) {
