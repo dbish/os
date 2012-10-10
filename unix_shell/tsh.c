@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <fcntl.h>
 
 /* Misc manifest constants */
 #define MAXLINE    1024   /* max line size */
@@ -98,7 +99,7 @@ void app_error(char *msg);
 typedef void handler_t(int);
 handler_t *Signal(int signum, handler_t *handler);
 
-int find_pipe(char **argv, int argc, struct pipe_info_t *pipe_info);
+int find_pipe(char **argv, int argc, char *look_for);
 
 /*
  * main - The shell's main routine
@@ -212,8 +213,11 @@ void eval(char *cmdline)
 		app_error("Sigprocmask died before fork");
 
 
-    //set up piping if in the command line
-    temp_p = strtok(cmdline, "|");
+    //check for pipe
+    //TODO: split based on pipe
+    
+
+    /*temp_p = strtok(cmdline, "|");
     temp_p = strtok(NULL, "|");
     if (temp_p != NULL){
 	pipe_status = 0;
@@ -226,13 +230,15 @@ void eval(char *cmdline)
     else{
 	strncpy(cmdline_one, cmdline, MAXLINE-1);
     }
+    */
 
-    if (pipe_status == 0) {
+    /*if (pipe_status == 0) {
 	forkchild(cmdline_two, &mask, 1, fd);
    	forkchild(cmdline_one, &mask, 0, fd);
    }else{
     	forkchild(cmdline, &mask, pipe_status , fd);
-    }
+    }*/
+    	forkchild(cmdline, &mask, pipe_status , fd);
 
     //unblock sigchld for parent
     if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
@@ -253,10 +259,34 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
     int bg_job, pid, argc;
     bg_job = pid = argc = 0;
     static char* argv[MAXARGS] = {};
-    int pipe_to;
-
+    int pipe_to, i;
+    char file_name[MAXLINE];
+    int index = 0;
+    int redirect = -1; /*three states: {-1:none, 0:out, 1:in}*/ 
+    int file;
 
     bg_job = parseline(cmdline, argv, &argc);
+    //TODO:Check for redirect and split
+    if (argc > 2) {
+	index = find_pipe(argv, argc, ">");
+	if (index == 0) {
+		index = find_pipe(argv, argc, "<");
+		if (index != 0) redirect = 1;
+	}else{
+		redirect = 0;
+	}
+    }
+
+    if (index != 0){/*redirect found*/
+	//save the file to redirect to/from
+	strncpy(file_name, argv[index+1], strlen(argv[index+1])+1);
+	printf("file: %s\n", file_name); 
+	for (i = index; i < argc; i++){
+		argv[i] = '\0';
+	}
+	file = open(file_name, O_RDWR | O_CREAT, 0666);
+    } 
+	printf("Number of args: %d\n", argc);
     if (bg_job < 0) return; /*empty line*/
 
     if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/
@@ -270,32 +300,23 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 			app_error("Sigprocmask died after fork");
 
 		setpgid(0,0);
+		     //TODO: redirect input or output if needed
 
+		if (redirect == 0){
+			printf("PRINT OUT\n");
+			dup2(file, STDOUT_FILENO);
+			close(file);
+		}else if (redirect == 1){
+			printf("PRINT IN\n");
+			dup2(file, STDIN_FILENO);
+			close(file);
+		}
 
-		    //close end of pipe not being used
-		    if (pipe_status == 0) {
-		 	close(fd[0]);
-			dup2(STDOUT_FILENO, fd[1]);
-		    }else if (pipe_status == 1){
-			close(fd[1]);
-			dup2(STDIN_FILENO, fd[0]);
-		    }
-		//FILE *fp;
-		//fp = popen(cmdline, "w");
-		//execvpe(cmdline, cmdline, environ);
-		//char path[50];
-	        //while (fgets(path, 50, fp) != NULL)
-		//	printf("%s", path);
-		//pclose(fp);
-		//execute process
                 if (execvpe(argv[0], argv, environ) < 0){
 			printf("%s: Command not found.\n", argv[0]);
 			exit(0);
 		}
 
-		//if (pipe_found){
-		//  close(pipefd[1]);
-		//}
 	}
 
 
@@ -820,7 +841,7 @@ void sigquit_handler(int sig)
     exit(1);
 }
 
-int find_pipe(char **argv, int argc, struct pipe_info_t *pipe_info)
+int find_pipe(char **argv, int argc, char *look_for)
 {
   int i = 0;
   int x = 0;
@@ -828,16 +849,12 @@ int find_pipe(char **argv, int argc, struct pipe_info_t *pipe_info)
 
   for (i = 0; i < argc; ++i)
     {
-      for (x = 0; x < 3; ++x)
-	{
-	  if (0 == strcmp(pipes[x], *argv))
+	
+	  if (0 == strcmp(look_for, *argv))
 	    {
-	      pipe_info->pipe_char = pipes[x];
-	      pipe_info->index = i;
-	      printf("pipe found: %s at index: %d\n", pipe_info->pipe_char, i);
-	      return 1;
+	      printf("pipe found at index: %d\n", i);
+	      return i;
 	    }
-	}
 
       argv++;
     }
