@@ -48,6 +48,8 @@ struct job_t {              /* The job struct */
     int jid;                /* job ID [1, 2, ...] */
     int state;              /* UNDEF, BG, FG, or ST */
     char cmdline[MAXLINE];  /* command line */
+    int *fd;
+    int pipe_st;
 };
 struct job_t jobs[MAXJOBS]; /* The job list */
 
@@ -65,6 +67,7 @@ struct pipe_info_t
 /* Function prototypes */
 
 /* Here are the functions that you will implement */
+void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd);
 void eval(char *cmdline);
 int builtin_cmd(char **argv, int argc);
 void do_bgfg(char **argv, int argc);
@@ -81,7 +84,7 @@ void sigquit_handler(int sig);
 void clearjob(struct job_t *job);
 void initjobs(struct job_t *jobs);
 int maxjid(struct job_t *jobs);
-int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline);
+int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int pipe_status);
 int deletejob(struct job_t *jobs, pid_t pid);
 pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
@@ -177,12 +180,20 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline)
 {
+    //copy command line for piping
+    char cmdline_one[MAXLINE];
+    char cmdline_two[MAXLINE];
+    char cmdline_cpy[MAXLINE];
+    char *temp_p = 0;
 
-    int bg_job = 1;
-    static char* argv[MAXARGS] = {};
+    pid_t pid;              /* job PID */
+    strncpy(cmdline_cpy, cmdline, MAXLINE);
 
-    int pid = 0;
-    int argc = 0;
+    //init piping variables
+    int pipe_status = -1; /*3 states: {-1: no pipe, 0: write, 1: read}*/
+    int fd[2];
+    if (-1 == pipe(fd))
+	app_error("Unable to open pipe");
 
     int pipefd[2];  /* pipe fd array */
 
@@ -193,13 +204,39 @@ void eval(char *cmdline)
     sigset_t mask;
     if (-1 == sigemptyset(&mask) )
       app_error("Sigempty set failed");
-
     if (-1 == sigaddset(&mask, SIGCHLD))
       app_error("sigaddset failed");
 
-    bg_job = parseline(cmdline, argv, &argc);
+    //block sigchld_handler while forking
+    if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
+		app_error("Sigprocmask died before fork");
 
-    if (bg_job < 0) return; /* emtpty line */
+
+    //set up piping if in the command line
+    temp_p = strtok(cmdline, "|");
+    temp_p = strtok(NULL, "|");
+    if (temp_p != NULL){
+	pipe_status = 0;
+        temp_p = strtok(cmdline, "|");
+	strncpy(cmdline_one, temp_p, strlen(temp_p));
+        temp_p = strtok(cmdline_cpy, "|");
+        temp_p = strtok(NULL, "|");
+        strncpy(cmdline_two, temp_p, strlen(temp_p));
+    }
+    else{
+	strncpy(cmdline_one, cmdline, MAXLINE-1);
+    }
+
+    if (pipe_status == 0) {
+	forkchild(cmdline_two, &mask, 1, fd);
+   	forkchild(cmdline_one, &mask, 0, fd);
+   }else{
+    	forkchild(cmdline, &mask, pipe_status , fd);
+    }
+
+    //unblock sigchld for parent
+    if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
+ 	app_error("Sigprocmask died while unblocking");
 
     //if pipe is found, the struct will be filled in
     pipe_found = find_pipe(argv, argc, &pipe_info);
@@ -209,28 +246,49 @@ void eval(char *cmdline)
       //app_error("pipe died");
     }
 
-    //Need to handle pipes, i.e. this needs to work "ls . | more"
+    return;
+}
+
+void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
+    int bg_job, pid, argc;
+    bg_job = pid = argc = 0;
+    static char* argv[MAXARGS] = {};
+    int pipe_to;
+
+
+    bg_job = parseline(cmdline, argv, &argc);
+    if (bg_job < 0) return; /*empty line*/
+
     if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/
-	    //block sigchld_handler while forking
-	if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
-		app_error("Sigprocmask died before fork");
 
 	if ((pid = fork()) < 0)
 		app_error("fork error\n");
 
 	if (0 == pid){ /*child*/
 		//unblock sigchld for child
-		if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL))
+		if (-1 == sigprocmask(SIG_UNBLOCK, mask, NULL))
 			app_error("Sigprocmask died after fork");
 
 		setpgid(0,0);
 
-		if (pipe_found){
-		  close(pipefd[1]); //unused write end
-		  dup2(0, pipefd[0]); /*grab from the stdin*/
-		}
+
+		    //close end of pipe not being used
+		    if (pipe_status == 0) {
+		 	close(fd[0]);
+			dup2(STDOUT_FILENO, fd[1]);
+		    }else if (pipe_status == 1){
+			close(fd[1]);
+			dup2(STDIN_FILENO, fd[0]);
+		    }
+		//FILE *fp;
+		//fp = popen(cmdline, "w");
+		//execvpe(cmdline, cmdline, environ);
+		//char path[50];
+	        //while (fgets(path, 50, fp) != NULL)
+		//	printf("%s", path);
+		//pclose(fp);
 		//execute process
-                if (execvp(argv[0], argv) < 0){
+                if (execvpe(argv[0], argv, environ) < 0){
 			printf("%s: Command not found.\n", argv[0]);
 			exit(0);
 		}
@@ -244,30 +302,22 @@ void eval(char *cmdline)
 	/*parent handles child job processing*/
 	if (bg_job){
 		//Add job as a background job
-		addjob(jobs, pid, BG, cmdline);
+		addjob(jobs, pid, BG, cmdline, fd, pipe_status);
 
 	} else {
 		/* Add to list, if interrupted it will be marked as FG */
-
-		addjob(jobs, pid, FG, cmdline);
-		if (pipe_found){
-		  close(pipefd[0]); //unused read end
-		  dup2(1, pipefd[1]);
-		}
+		addjob(jobs, pid, FG, cmdline, fd, pipe_status);
 		waitfg(pid);
 		if (pipe_found){
 		  close(pipefd[1]);
 		}
 	}
 
-        //unblock sigchld for parent
-	if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
-		app_error("Sigprocmask died while unblocking");
     }
-
 
     return;
 }
+
 
 /*
  * parseline - Parse the command line and build the argv array.
@@ -433,12 +483,17 @@ void waitfg(pid_t pid)
 	app_error("waitpid error");
 
     job = getjobpid(jobs, pid);
+    //if (job->pipe_st != -1){
+    //	if (job->pipe_st == 0)
+    //		close(job->fd[1]);
+    //    else
+    //		close(job->fd[0]);
+    //}
 
     if(0 != status && WIFSTOPPED(status)){
 	//job was in the FG but received the stop signal
 	job->state = ST;
     }
-
     else if (job->state == FG){
 	//this will catch the situation where status is WIFSTOPPED as well
 	if (0 == deletejob(jobs, pid))
@@ -462,14 +517,16 @@ void sigchld_handler(int sig)
 {
   int status = 0;
   pid_t pid;
+  struct job_t *job;
 
   //only ctach jobs that have terminated
   if (sig == SIGCHLD) {
-      //get the pid of the job that terminated
-      while ((pid = waitpid(-1, &status, WNOHANG)) > 0){
-	  if (deletejob(jobs, pid) == 0)
-	      app_error("Error deleting a job");
-      }
+    //get the pid of the job that terminated
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0){
+	    job = getjobpid(jobs, pid);
+      if (deletejob(jobs, pid) == 0)
+	app_error("Error deleting a job");
+    }
 
   }
 
@@ -547,6 +604,8 @@ void clearjob(struct job_t *job) {
     job->jid = 0;
     job->state = UNDEF;
     job->cmdline[0] = '\0';
+    job->fd = 0;
+    job->pipe_st = 0;
 }
 
 /* initjobs - Initialize the job list */
@@ -569,7 +628,7 @@ int maxjid(struct job_t *jobs)
 }
 
 /* addjob - Add a job to the job list */
-int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
+int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int pipe_status)
 {
     int i;
 
@@ -581,6 +640,8 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
 	    jobs[i].pid = pid;
 	    jobs[i].state = state;
 	    jobs[i].jid = nextjid++;
+	    jobs[i].fd = fd;
+            jobs[i].pipe_st = pipe_status;
 	    if (nextjid > MAXJOBS)
 		nextjid = 1;
 	    strcpy(jobs[i].cmdline, cmdline);
