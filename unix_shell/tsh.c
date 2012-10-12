@@ -1,6 +1,7 @@
 /*
  * tsh - A tiny shell program with job control
  *
+ * db643 + jbd65
  * <Diamond Bishop db643>
  * <Josh Datko jbd65>
  */
@@ -68,7 +69,8 @@ struct pipe_info_t
 /* Function prototypes */
 
 /* Here are the functions that you will implement */
-void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd);
+//void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd);
+void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask, int pipe_status);
 void eval(char *cmdline);
 int builtin_cmd(char **argv, int argc);
 void do_bgfg(char **argv, int argc);
@@ -85,7 +87,7 @@ void sigquit_handler(int sig);
 void clearjob(struct job_t *job);
 void initjobs(struct job_t *jobs);
 int maxjid(struct job_t *jobs);
-int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int pipe_status);
+int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int pipe_status);
 int deletejob(struct job_t *jobs, pid_t pid);
 pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
@@ -101,6 +103,7 @@ handler_t *Signal(int signum, handler_t *handler);
 
 int find_pipe(char **argv, int argc, char *look_for);
 
+int fd[2]; /*file descriptors for pipe */
 /*
  * main - The shell's main routine
  */
@@ -181,18 +184,19 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline)
 {
-    //copy command line for piping
-    char cmdline_one[MAXLINE];
-    char cmdline_two[MAXLINE];
-    char cmdline_cpy[MAXLINE];
-    char *temp_p = 0;
 
-    pid_t pid;              /* job PID */
+    char cmdline_cpy[MAXLINE];
+    int argc, argc_2;
+    int index = 0;
+    int j = 0;
+    static char* argv[MAXARGS] = {};
+    static char* argv_2[MAXARGS] = {};
+    int bg_job, i;
+
     strncpy(cmdline_cpy, cmdline, MAXLINE);
 
     //init piping variables
     int pipe_status = -1; /*3 states: {-1: no pipe, 0: write, 1: read}*/
-    int fd[2];
     if (-1 == pipe(fd))
 	app_error("Unable to open pipe");
 
@@ -212,64 +216,49 @@ void eval(char *cmdline)
     if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
 		app_error("Sigprocmask died before fork");
 
+    bg_job = parseline(cmdline, argv, &argc);
 
-    //check for pipe
-    //TODO: split based on pipe
-    
 
-    /*temp_p = strtok(cmdline, "|");
-    temp_p = strtok(NULL, "|");
-    if (temp_p != NULL){
-	pipe_status = 0;
-        temp_p = strtok(cmdline, "|");
-	strncpy(cmdline_one, temp_p, strlen(temp_p));
-        temp_p = strtok(cmdline_cpy, "|");
-        temp_p = strtok(NULL, "|");
-        strncpy(cmdline_two, temp_p, strlen(temp_p));
+    if (argc > 2){
+	index = find_pipe(argv, argc, "|");
     }
-    else{
-	strncpy(cmdline_one, cmdline, MAXLINE-1);
+    if (index > 0){
+	for (i = index; i < argc; i++){
+		argv_2[j] = argv[i+1];
+		argv[i] = '\0';
+		j++;
+	}
+	argc_2 = argc-1-index;
+	argc = index;
+	pipe_status = 0;
     }
     */
 
-    /*if (pipe_status == 0) {
-	forkchild(cmdline_two, &mask, 1, fd);
-   	forkchild(cmdline_one, &mask, 0, fd);
-   }else{
-    	forkchild(cmdline, &mask, pipe_status , fd);
-    }*/
-    	forkchild(cmdline, &mask, pipe_status , fd);
+
+    if (index > 0) /* pipe situation */
+	    forkchild(cmdline, argv_2, argc_2, bg_job, &mask, 1);
+
+    forkchild(cmdline, argv, argc, bg_job, &mask, pipe_status);
 
     //unblock sigchld for parent
     if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
  	app_error("Sigprocmask died while unblocking");
 
-    //if pipe is found, the struct will be filled in
-    //pipe_found = find_pipe(argv, argc, &pipe_info);
-
-    //if (pipe_found){
-      //if (-1 == pipe(pipefd))
-      //app_error("pipe died");
-    //}
-
     return;
 }
 
-void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
-    int bg_job, pid, argc;
-    bg_job = pid = argc = 0;
-    static char* argv[MAXARGS] = {};
-    int pipe_to, i;
+void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask, int pipe_status){
+    int pid = 0;
+    int i;
     char file_name[MAXLINE];
     int index = 0;
-    int redirect = -1; /*three states: {-1:none, 0:out, 1:in}*/ 
-    int file;
+    int redirect = -1; /*three state: {-1:none, 0:out, 1:in}*/
+    int file = 0;
 
-    bg_job = parseline(cmdline, argv, &argc);
-    //TODO:Check for redirect and split
-    if (argc > 2) {
+    //check for pipe
+    if (argc > 2){
 	index = find_pipe(argv, argc, ">");
-	if (index == 0) {
+	if (index == 0){
 		index = find_pipe(argv, argc, "<");
 		if (index != 0) redirect = 1;
 	}else{
@@ -277,16 +266,17 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 	}
     }
 
-    if (index != 0){/*redirect found*/
-	//save the file to redirect to/from
+    if (index != 0){//redirect found
+	//save the file to redirect from/to
 	strncpy(file_name, argv[index+1], strlen(argv[index+1])+1);
-	printf("file: %s\n", file_name); 
 	for (i = index; i < argc; i++){
 		argv[i] = '\0';
 	}
 	file = open(file_name, O_RDWR | O_CREAT, 0666);
-    } 
-	printf("Number of args: %d\n", argc);
+	if(file == -1)
+	    app_error("file fail\n");
+    }
+
     if (bg_job < 0) return; /*empty line*/
 
     if (!builtin_cmd(argv, argc)){ /*handle built in commands or fork*/
@@ -299,19 +289,31 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 		if (-1 == sigprocmask(SIG_UNBLOCK, mask, NULL))
 			app_error("Sigprocmask died after fork");
 
-		setpgid(0,0);
-		     //TODO: redirect input or output if needed
+		if (-1 == setpgid(0,0))
+		    app_error("setpgid error");
 
-		if (redirect == 0){
-			printf("PRINT OUT\n");
-			dup2(file, STDOUT_FILENO);
-			close(file);
-		}else if (redirect == 1){
-			printf("PRINT IN\n");
-			dup2(file, STDIN_FILENO);
-			close(file);
+		if (pipe_status == 0){
+			if (dup2(fd[1], STDOUT_FILENO)==-1)
+				printf("ERROR \n");
+		}else if (pipe_status == 1){
+		    if (dup2(fd[0], STDIN_FILENO) == -1)
+                        app_error("error on pipe");
 		}
 
+		if (redirect == 0){
+		    if(dup2(file, STDOUT_FILENO) == -1)
+			app_error("dup2 error");
+
+		    if(close(file) == -1)
+			app_error("close error");
+
+		}else if (redirect == 1){
+		    if(dup2(file, STDIN_FILENO) == -1)
+			app_error("dup2 error");
+		    if(close(file) == -1)
+			app_error("close error\n");
+		}
+		//execute process
                 if (execvpe(argv[0], argv, environ) < 0){
 			printf("%s: Command not found.\n", argv[0]);
 			exit(0);
@@ -323,11 +325,11 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 	/*parent handles child job processing*/
 	if (bg_job){
 		//Add job as a background job
-		addjob(jobs, pid, BG, cmdline, fd, pipe_status);
+		addjob(jobs, pid, BG, cmdline, pipe_status);
 
 	} else {
 		/* Add to list, if interrupted it will be marked as FG */
-		addjob(jobs, pid, FG, cmdline, fd, pipe_status);
+		addjob(jobs, pid, FG, cmdline, pipe_status);
 		waitfg(pid);
 		//if (pipe_found){
 		//  close(pipefd[1]);
@@ -504,18 +506,20 @@ void waitfg(pid_t pid)
 	app_error("waitpid error");
 
     job = getjobpid(jobs, pid);
-    //if (job->pipe_st != -1){
-    //	if (job->pipe_st == 0)
-    //		close(job->fd[1]);
-    //    else
-    //		close(job->fd[0]);
-    //}
 
-    if(0 != status && WIFSTOPPED(status)){
+    if (NULL == job)
+        return;  // job has already been cleaned up
+
+    if(0 != status && WIFSTOPPED(status)) {
 	//job was in the FG but received the stop signal
-	job->state = ST;
+        job->state = ST;
     }
-    else if (job->state == FG){
+
+    if(0 != status && WIFSIGNALED(status) && SIGINT == WTERMSIG(status)){
+
+        printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(pid), pid, SIGINT);
+    }
+    if (job->state == FG){
 	//this will catch the situation where status is WIFSTOPPED as well
 	if (0 == deletejob(jobs, pid))
 	    app_error("Error deleting fg job");
@@ -570,9 +574,13 @@ void sigint_handler(int sig)
 
     //kill job
     if (fpid > 0) {
-      kill(-fpid, sig);
+	if (-1 == kill(-fpid, sig))
+            app_error("Died while killing");
 
       printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(fpid), fpid, sig);
+
+      if (deletejob(jobs, fpid) == 0)
+          app_error("Error deleting job in sigint handler");
 
     }
 
@@ -649,7 +657,7 @@ int maxjid(struct job_t *jobs)
 }
 
 /* addjob - Add a job to the job list */
-int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int pipe_status)
+int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int pipe_status)
 {
     int i;
 
@@ -661,7 +669,6 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int
 	    jobs[i].pid = pid;
 	    jobs[i].state = state;
 	    jobs[i].jid = nextjid++;
-	    jobs[i].fd = fd;
             jobs[i].pipe_st = pipe_status;
 	    if (nextjid > MAXJOBS)
 		nextjid = 1;
@@ -745,6 +752,17 @@ int pid2jid(pid_t pid)
 	if (jobs[i].pid == pid) {
             return jobs[i].jid;
         }
+    return 0;
+}
+
+int find_pipe(char **argv, int argc, char *look_for){
+    int i = 0;
+    for (i = 0; i < argc; i++){
+	if ((argv[i] != NULL) && (strlen(argv[i]) == 1)){
+		if (!strncmp(look_for, argv[i], 1))
+			return i;
+	}
+    }
     return 0;
 }
 
@@ -849,7 +867,7 @@ int find_pipe(char **argv, int argc, char *look_for)
 
   for (i = 0; i < argc; ++i)
     {
-	
+
 	  if (0 == strcmp(look_for, *argv))
 	    {
 	      printf("pipe found at index: %d\n", i);
