@@ -62,7 +62,8 @@ static const char * builtin_cmds[] = {"quit", "jobs", "bg", "fg"}; /* built in c
 /* Function prototypes */
 
 /* Here are the functions that you will implement */
-void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd);
+//void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd);
+void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask, int pipe_status);
 void eval(char *cmdline);
 int builtin_cmd(char **argv, int argc);
 void do_bgfg(char **argv, int argc);
@@ -79,7 +80,7 @@ void sigquit_handler(int sig);
 void clearjob(struct job_t *job);
 void initjobs(struct job_t *jobs);
 int maxjid(struct job_t *jobs);
-int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int pipe_status);
+int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int pipe_status);
 int deletejob(struct job_t *jobs, pid_t pid);
 pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
@@ -95,6 +96,7 @@ handler_t *Signal(int signum, handler_t *handler);
 
 int find_pipe(char **argv, int argc, char *look_for);
 
+int fd[2];
 /*
  * main - The shell's main routine
  */
@@ -176,17 +178,21 @@ int main(int argc, char **argv)
 void eval(char *cmdline)
 {
     //copy command line for piping
-    char cmdline_one[MAXLINE];
-    char cmdline_two[MAXLINE];
+    //char cmdline_one[MAXLINE];
+    //char cmdline_two[MAXLINE];
     char cmdline_cpy[MAXLINE];
     char *temp_p = 0;
-
-    pid_t pid;              /* job PID */
+    int argc, argc_2;
+    int index = 0;
+    int j = 0;
+    static char* argv[MAXARGS] = {};
+    static char* argv_2[MAXARGS] = {};
+    int bg_job, i;
+    //pid_t pid;              /* job PID */
     strncpy(cmdline_cpy, cmdline, MAXLINE);
 
     //init piping variables
     int pipe_status = -1; /*3 states: {-1: no pipe, 0: write, 1: read}*/
-    int fd[2];
     if (-1 == pipe(fd))
 	app_error("Unable to open pipe");
 
@@ -202,6 +208,7 @@ void eval(char *cmdline)
 		app_error("Sigprocmask died before fork");
 
 
+    bg_job = parseline(cmdline, argv, &argc);
     //set up piping if in the command line
     /*temp_p = strtok(cmdline, "|");
     temp_p = strtok(NULL, "|");
@@ -223,8 +230,25 @@ void eval(char *cmdline)
    }else{
     	forkchild(cmdline, &mask, pipe_status , fd);
     }*/
- 
-    forkchild(cmdline, &mask, pipe_status, fd);
+    if (argc > 2){
+	index = find_pipe(argv, argc, "|");
+    }
+    if (index > 0){
+	for (i = index; i < argc; i++){
+		argv_2[j] = argv[i+1];
+		argv[i] = '\0';
+		j++;
+	}
+	argc_2 = argc-1-index;
+	argc = index;
+	printf("argv:%s, argv_2:%s\n", argv[0], argv_2[0]);
+	pipe_status = 0;
+    }
+
+   
+    if (index > 0)
+	    forkchild(cmdline, argv_2, argc_2, bg_job, &mask, 1);
+    forkchild(cmdline, argv, argc, bg_job, &mask, pipe_status);
 
     //unblock sigchld for parent
     if (-1 == sigprocmask(SIG_UNBLOCK, &mask, NULL) )
@@ -234,18 +258,17 @@ void eval(char *cmdline)
     return;
 }
 
-void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
-    int bg_job, pid, argc;
-    bg_job = pid = argc = 0;
-    static char* argv[MAXARGS] = {};
+void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask, int pipe_status){
+    int pid = 0;
+    //static char* argv[MAXARGS] = {};
     int pipe_to, i;
     char file_name[MAXLINE];
     int index = 0;
     int redirect = -1; /*three state: {-1:none, 0:out, 1:in}*/
     int file;
-
-
-    bg_job = parseline(cmdline, argv, &argc);
+    
+  
+    //bg_job = parseline(cmdline, argv, &argc);
     if (argc > 2){
 	index = find_pipe(argv, argc, ">");
 	if (index == 0){
@@ -278,6 +301,19 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 			app_error("Sigprocmask died after fork");
 		setpgid(0,0);
 
+		if (pipe_status == 0){
+			//close(fd[0]);
+			if (dup2(fd[1], STDOUT_FILENO)==-1)
+				printf("ERROR \n");
+			//close(fd[1]);
+			printf("Piping %s out:\n", argv[0]);
+		}else if (pipe_status == 1){
+			//close(fd[1]);
+			dup2(fd[0], STDIN_FILENO);
+			//close(fd[0]);
+			printf("Piping %s in\n", argv[0]);
+		}
+
 		if (redirect == 0){
 			dup2(file, STDOUT_FILENO);
 			close(file);
@@ -294,11 +330,11 @@ void forkchild(char *cmdline, sigset_t *mask, int pipe_status, int* fd){
 	/*parent handles child job processing*/
 	if (bg_job){
 		//Add job as a background job
-		addjob(jobs, pid, BG, cmdline, fd, pipe_status);
+		addjob(jobs, pid, BG, cmdline, pipe_status);
 
 	} else {
 		/* Add to list, if interrupted it will be marked as FG */
-		addjob(jobs, pid, FG, cmdline, fd, pipe_status);
+		addjob(jobs, pid, FG, cmdline, pipe_status);
 		waitfg(pid);
 	}
 
@@ -614,7 +650,7 @@ int maxjid(struct job_t *jobs)
 }
 
 /* addjob - Add a job to the job list */
-int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int pipe_status)
+int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int pipe_status)
 {
     int i;
 
@@ -627,7 +663,6 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline, int *fd, int
 	    jobs[i].pid = pid;
 	    jobs[i].state = state;
 	    jobs[i].jid = nextjid++;
-	    jobs[i].fd = fd;
             jobs[i].pipe_st = pipe_status;
 	    if (nextjid > MAXJOBS)
 		nextjid = 1;
