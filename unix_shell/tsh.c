@@ -205,7 +205,6 @@ void eval(char *cmdline)
     if (-1 == sigprocmask(SIG_BLOCK, &mask, NULL))
 		app_error("Sigprocmask died before fork");
 
-
     bg_job = parseline(cmdline, argv, &argc);
 
     if (argc > 2){
@@ -219,7 +218,6 @@ void eval(char *cmdline)
 	}
 	argc_2 = argc-1-index;
 	argc = index;
-	printf("argv:%s, argv_2:%s\n", argv[0], argv_2[0]);
 	pipe_status = 0;
     }
 
@@ -243,10 +241,9 @@ void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask,
     char file_name[MAXLINE];
     int index = 0;
     int redirect = -1; /*three state: {-1:none, 0:out, 1:in}*/
-    int file;
+    int file = 0;
 
-
-    //bg_job = parseline(cmdline, argv, &argc);
+    //check for pipe
     if (argc > 2){
 	index = find_pipe(argv, argc, ">");
 	if (index == 0){
@@ -264,6 +261,8 @@ void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask,
 		argv[i] = '\0';
 	}
 	file = open(file_name, O_RDWR | O_CREAT, 0666);
+	if(file == -1)
+	    app_error("file fail\n");
     }
 
     if (bg_job < 0) return; /*empty line*/
@@ -277,21 +276,29 @@ void forkchild(char *cmdline, char **argv, int argc, int bg_job, sigset_t *mask,
 		//unblock sigchld for child
 		if (-1 == sigprocmask(SIG_UNBLOCK, mask, NULL))
 			app_error("Sigprocmask died after fork");
-		setpgid(0,0);
+		if (-1 == setpgid(0,0))
+		    app_error("setpgid error");
 
 		if (pipe_status == 0){
 			if (dup2(fd[1], STDOUT_FILENO)==-1)
 				printf("ERROR \n");
 		}else if (pipe_status == 1){
-			dup2(fd[0], STDIN_FILENO);
+		    if (dup2(fd[0], STDIN_FILENO) == -1)
+                        app_error("error on pipe");
 		}
 
 		if (redirect == 0){
-			dup2(file, STDOUT_FILENO);
-			close(file);
+		    if(dup2(file, STDOUT_FILENO) == -1)
+			app_error("dup2 error");
+
+		    if(close(file) == -1)
+			app_error("close error");
+
 		}else if (redirect == 1){
-			dup2(file, STDIN_FILENO);
-			close(file);
+		    if(dup2(file, STDIN_FILENO) == -1)
+			app_error("dup2 error");
+		    if(close(file) == -1)
+			app_error("close error\n");
 		}
 		//execute process
                 if (execvpe(argv[0], argv, environ) < 0){
